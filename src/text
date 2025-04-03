@@ -1,0 +1,653 @@
+import React, { useState } from 'react';
+import { Database, Plus, Trash2, Code, X, Layers } from 'lucide-react';
+
+
+// Component props interface
+// databaseSchema: Object containing tables and their fields with types
+// fieldOptions: Object containing predefined options for specific fields (optional)
+// onSubmit: Callback function that receives the generated SQL and JSON
+// buttonLabel: Custom label for the trigger button
+// buttonClassName: Custom className for the trigger button
+// buttonIcon: Optional React node to use as button icon
+const ConditionBuilder = ({ 
+  databaseSchema, 
+  fieldOptions = {}, // Example: { users: { status: ['active', 'inactive', 'pending'] } }
+  onSubmit, 
+  buttonLabel = "Build Condition", 
+  buttonClassName = "flex items-center bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded",
+  buttonIcon = <Database className="mr-2" size={18} />
+}) => {
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedTable, setSelectedTable] = useState('');
+  const [showTableSelector, setShowTableSelector] = useState(true);
+  const [conditions, setConditions] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [errors, setErrors] = useState({});
+  const [nextConditionId, setNextConditionId] = useState(1);
+
+  // Operators for conditions
+  const operators = [
+    { value: '=', label: 'Equals' },
+    { value: '!=', label: 'Not Equals' },
+    { value: '>', label: 'Greater Than' },
+    { value: '<', label: 'Less Than' },
+    { value: '>=', label: 'Greater Than or Equal' },
+    { value: '<=', label: 'Less Than or Equal' },
+    { value: 'LIKE', label: 'Like' },
+    { value: 'IN', label: 'In' },
+    { value: 'IS NULL', label: 'Is Null' }
+  ];
+
+  // Logical operators
+  const logicalOperators = [
+    { value: 'AND', label: 'AND' },
+    { value: 'OR', label: 'OR' }
+  ];
+
+  // Value input modes
+  const inputModes = [
+    { value: 'value', label: 'Value' },
+    { value: 'column', label: 'Column' }
+  ];
+
+  // Open the condition builder
+  const handleOpenBuilder = () => {
+    setIsModalOpen(true);
+    setShowTableSelector(true);
+  };
+
+  // Close the condition builder
+  const handleCloseBuilder = () => {
+    setIsModalOpen(false);
+    setShowTableSelector(true);
+    setSelectedTable('');
+    setConditions([]);
+    setGroups([]);
+    setErrors({});
+    setNextConditionId(1);
+  };
+
+  // Select a table
+  const handleTableSelect = (table) => {
+    setSelectedTable(table);
+    setShowTableSelector(false);
+    
+    // Initialize with one empty condition
+    const initialCondition = {
+      id: '1',
+      field: databaseSchema[table][0].name,
+      operator: '=',
+      valueType: 'value',
+      value: '',
+      compareToField: databaseSchema[table][1]?.name || databaseSchema[table][0].name,
+      logic: 'AND',
+      groupId: null
+    };
+    
+    setConditions([initialCondition]);
+    setNextConditionId(2);
+  };
+
+  // Add a new condition
+  const addCondition = (groupId = null) => {
+    const newCondition = {
+      id: String(nextConditionId),
+      field: databaseSchema[selectedTable][0].name,
+      operator: '=',
+      valueType: 'value',
+      value: '',
+      compareToField: databaseSchema[selectedTable][1]?.name || databaseSchema[selectedTable][0].name,
+      logic: 'AND',
+      groupId
+    };
+    
+    setConditions([...conditions, newCondition]);
+    setNextConditionId(nextConditionId + 1);
+  };
+
+  // Remove a condition
+  const removeCondition = (id) => {
+    if (conditions.length > 1) {
+      setConditions(conditions.filter(condition => condition.id !== id));
+    }
+  };
+
+  // Update a condition
+  const updateCondition = (id, field, value) => {
+    setConditions(conditions.map(condition => {
+      if (condition.id === id) {
+        // Reset value when field changes to prevent type mismatches
+        if (field === 'field') {
+          return { 
+            ...condition, 
+            [field]: value,
+            value: '' 
+          };
+        }
+        
+        // Reset compareToField if valueType changes to column
+        if (field === 'valueType' && value === 'column') {
+          // Find a field with the same type
+          const currentFieldType = getFieldType(condition.field);
+          const compatibleField = databaseSchema[selectedTable].find(
+            f => f.name !== condition.field && f.type === currentFieldType
+          );
+          
+          return { 
+            ...condition, 
+            [field]: value,
+            compareToField: compatibleField ? compatibleField.name : ''
+          };
+        }
+        
+        return { ...condition, [field]: value };
+      }
+      return condition;
+    }));
+    
+    // Clear any errors for this field
+    if (errors[`${id}-${field}`]) {
+      const newErrors = { ...errors };
+      delete newErrors[`${id}-${field}`];
+      setErrors(newErrors);
+    }
+  };
+
+  // Add a condition group
+  const addGroup = () => {
+    const groupId = String(Date.now());
+    setGroups([...groups, { id: groupId, logic: 'AND' }]);
+    
+    // Add an initial condition to the group
+    const newCondition = {
+      id: String(nextConditionId),
+      field: databaseSchema[selectedTable][0].name,
+      operator: '=',
+      valueType: 'value',
+      value: '',
+      compareToField: databaseSchema[selectedTable][1]?.name || databaseSchema[selectedTable][0].name,
+      logic: 'AND',
+      groupId
+    };
+    
+    setConditions([...conditions, newCondition]);
+    setNextConditionId(nextConditionId + 1);
+  };
+
+  // Update group logic
+  const updateGroupLogic = (groupId, logic) => {
+    setGroups(groups.map(group => 
+      group.id === groupId ? { ...group, logic } : group
+    ));
+  };
+
+  // Remove a group and its conditions
+  const removeGroup = (groupId) => {
+    setGroups(groups.filter(group => group.id !== groupId));
+    setConditions(conditions.filter(condition => condition.groupId !== groupId));
+  };
+
+  // Get field type for validation
+  const getFieldType = (fieldName) => {
+    const field = databaseSchema[selectedTable].find(f => f.name === fieldName);
+    return field ? field.type : 'string';
+  };
+
+  // Generate SQL for the conditions
+  const generateSQL = () => {
+    if (conditions.length === 0) return '';
+
+    let sql = `SELECT * FROM ${selectedTable} WHERE `;
+    
+    // Ungrouped conditions
+    const ungroupedConditions = conditions.filter(c => c.groupId === null);
+    
+    // Function to build condition SQL
+    const buildConditionSQL = (condition, isFirst) => {
+      let conditionSQL = '';
+      
+      if (!isFirst) {
+        conditionSQL += ` ${condition.logic} `;
+      }
+      
+      if (condition.operator === 'IS NULL') {
+        conditionSQL += `${condition.field} IS NULL`;
+      } else if (condition.operator === 'IN') {
+        conditionSQL += `${condition.field} IN (${condition.value})`;
+      } else if (condition.valueType === 'column') {
+        conditionSQL += `${condition.field} ${condition.operator} ${condition.compareToField}`;
+      } else {
+        conditionSQL += `${condition.field} ${condition.operator} '${condition.value}'`;
+      }
+      
+      return conditionSQL;
+    };
+    
+    // Add ungrouped conditions
+    ungroupedConditions.forEach((condition, index) => {
+      sql += buildConditionSQL(condition, index === 0);
+    });
+    
+    // Add grouped conditions
+    groups.forEach((group, groupIndex) => {
+      const groupConditions = conditions.filter(c => c.groupId === group.id);
+      
+      if (groupConditions.length > 0) {
+        const isFirstItem = ungroupedConditions.length === 0 && groupIndex === 0;
+        
+        if (!isFirstItem) {
+          sql += ` ${group.logic} `;
+        }
+        
+        sql += '(';
+        groupConditions.forEach((condition, conditionIndex) => {
+          sql += buildConditionSQL(condition, conditionIndex === 0);
+        });
+        sql += ')';
+      }
+    });
+    
+    return sql;
+  };
+
+  // Generate JSON representation
+  const generateJSONOutput = () => {
+    return JSON.stringify({
+      table: selectedTable,
+      conditions,
+      groups
+    }, null, 2);
+  };
+
+  // Validate and submit query
+  const handleSubmit = () => {
+    const sql = generateSQL();
+    const json = generateJSONOutput();
+    
+    // Call the onSubmit callback with the generated data
+    if (onSubmit && typeof onSubmit === 'function') {
+      onSubmit({
+        sql,
+        json,
+        rawData: {
+          table: selectedTable,
+          conditions,
+          groups
+        }
+      });
+    }
+    
+    handleCloseBuilder();
+  };
+
+  // Render a condition 
+  const renderCondition = (condition, isFirst) => {
+    return (
+      <div key={condition.id} className="p-3 mb-3 border border-gray-200 rounded-md last:mb-0">
+        <div className="grid grid-cols-12 gap-3 items-start">
+          {!isFirst && (
+            <div className="col-span-2">
+              <select
+                value={condition.logic}
+                onChange={(e) => updateCondition(condition.id, 'logic', e.target.value)}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+              >
+                {logicalOperators.map((op) => (
+                  <option key={op.value} value={op.value}>
+                    {op.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          
+          <div className={`${isFirst ? 'col-span-3' : 'col-span-2'}`}>
+            <select
+              value={condition.field}
+              onChange={(e) => updateCondition(condition.id, 'field', e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            >
+              {databaseSchema[selectedTable].map((field) => (
+                <option key={field.name} value={field.name}>
+                  {field.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="col-span-2">
+            <select
+              value={condition.operator}
+              onChange={(e) => updateCondition(condition.id, 'operator', e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            >
+              {operators.map((op) => (
+                <option key={op.value} value={op.value}>
+                  {op.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="col-span-2">
+            <select
+              value={condition.valueType}
+              onChange={(e) => updateCondition(condition.id, 'valueType', e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            >
+              {inputModes.map((mode) => (
+                <option key={mode.value} value={mode.value}>
+                  {mode.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="col-span-3">
+            {condition.operator !== 'IS NULL' && (
+              condition.valueType === 'value' ? (
+                fieldOptions[selectedTable]?.[condition.field] ? (
+                  <select
+                    value={condition.value}
+                    onChange={(e) => updateCondition(condition.id, 'value', e.target.value)}
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                  >
+                    <option value="">Select {condition.field}</option>
+                    {fieldOptions[selectedTable][condition.field].map((option, index) => (
+                      <option key={index} value={typeof option === 'object' ? option.value : option}>
+                        {typeof option === 'object' ? option.label : option}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={getFieldType(condition.field) === 'number' ? 'number' : 
+                          getFieldType(condition.field) === 'date' ? 'date' : 'text'}
+                    value={condition.value}
+                    onChange={(e) => updateCondition(condition.id, 'value', e.target.value)}
+                    placeholder={`Enter ${getFieldType(condition.field)} value`}
+                    className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                  />
+                )
+              ) : (
+                <select
+                  value={condition.compareToField}
+                  onChange={(e) => updateCondition(condition.id, 'compareToField', e.target.value)}
+                  className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+                >
+                  {databaseSchema[selectedTable]
+                    .filter(field => field.type === getFieldType(condition.field))
+                    .map((field) => (
+                      <option key={field.name} value={field.name}>
+                        {field.name} ({field.type})
+                      </option>
+                    ))}
+                  {databaseSchema[selectedTable].filter(field => field.type === getFieldType(condition.field)).length === 0 && (
+                    <option disabled value="">No compatible fields available</option>
+                  )}
+                </select>
+              )
+            )}
+          </div>
+          
+          <div className="col-span-1">
+            <button 
+              onClick={() => removeCondition(condition.id)}
+              className="text-red-500 hover:text-red-700 p-1 rounded"
+            >
+              <Trash2 size={18} />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Render a group of conditions
+  const renderGroup = (group) => {
+    const groupConditions = conditions.filter(c => c.groupId === group.id);
+    
+    return (
+      <div key={group.id} className="border-2 border-red-200 rounded p-4 bg-red-50 mb-4">
+        <div className="flex justify-between items-center mb-3">
+          <div className="flex items-center">
+            <select
+              value={group.logic}
+              onChange={(e) => updateGroupLogic(group.id, e.target.value)}
+              className="border border-red-300 bg-white rounded px-2 py-1 text-sm"
+            >
+              {logicalOperators.map(op => (
+                <option key={op.value} value={op.value}>{op.label} Group</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex space-x-2">
+            <button 
+              onClick={() => addCondition(group.id)}
+              className="text-xs bg-white border border-red-400 text-red-600 hover:bg-red-50 px-2 py-1 rounded flex items-center"
+            >
+              <Plus size={14} className="mr-1" />
+              Add Condition
+            </button>
+            <button 
+              onClick={() => removeGroup(group.id)}
+              className="text-xs bg-white border border-red-400 text-red-600 hover:bg-red-50 px-2 py-1 rounded"
+            >
+              Remove Group
+            </button>
+          </div>
+        </div>
+        
+        <div className="bg-white border border-gray-200 rounded p-4">
+          {groupConditions.map((condition, index) => (
+            renderCondition(condition, index === 0)
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <>
+      {/* Only the button is shown by default */}
+      <button 
+        onClick={handleOpenBuilder}
+        className={buttonClassName}
+      >
+        {buttonIcon}
+        {buttonLabel}
+      </button>
+
+      {/* Modal Overlay - Only shown when isModalOpen is true */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4 overflow-y-auto">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col">
+            {showTableSelector ? (
+              // Table Selection View
+              <>
+                <div className="bg-red-600 text-white px-6 py-4 rounded-t-lg flex justify-between items-center">
+                  <h2 className="text-xl font-semibold">Select Table for Condition Building</h2>
+                  <button onClick={handleCloseBuilder} className="text-white hover:text-gray-200">
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="p-6">
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Select Database Table
+                    </label>
+                    <select
+                      value={selectedTable}
+                      onChange={(e) => handleTableSelect(e.target.value)}
+                      className="w-full border border-gray-300 rounded px-3 py-2"
+                    >
+                      <option value="" disabled>Select a table</option>
+                      {Object.keys(databaseSchema).map((table) => (
+                        <option key={table} value={table}>
+                          {table}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="bg-gray-50 px-6 py-3 flex justify-end rounded-b-lg border-t border-gray-200">
+                  <button 
+                    onClick={handleCloseBuilder} 
+                    className="text-gray-600 hover:text-gray-800 px-4 py-2 rounded"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              // Condition Builder View
+              <>
+                <div className="bg-red-600 text-white px-6 py-4 rounded-t-lg flex justify-between items-center">
+                  <h2 className="text-xl font-semibold flex items-center">
+                    <Database size={20} className="mr-2" />
+                    Condition Builder - {selectedTable}
+                  </h2>
+                  <button onClick={handleCloseBuilder} className="text-white hover:text-gray-200">
+                    <X size={20} />
+                  </button>
+                </div>
+                
+                <div className="flex-1 overflow-y-auto p-6">
+                  <div className="mb-6">
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-lg font-semibold text-red-600 flex items-center">
+                        <Layers size={18} className="mr-2" />
+                        Conditions
+                      </h3>
+                      <div className="flex space-x-2">
+                        <button 
+                          onClick={() => addCondition()}
+                          className="border border-red-600 text-red-600 hover:bg-red-50 text-sm px-3 py-1 rounded flex items-center"
+                        >
+                          <Plus size={16} className="mr-1" />
+                          Add Condition
+                        </button>
+                        <button 
+                          onClick={addGroup}
+                          className="border border-red-600 text-red-600 hover:bg-red-50 text-sm px-3 py-1 rounded flex items-center"
+                        >
+                          <Plus size={16} className="mr-1" />
+                          Add Group
+                        </button>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-4">
+                      {/* Ungrouped conditions */}
+                      <div className="bg-white border border-gray-200 rounded p-4">
+                        {conditions
+                          .filter(c => c.groupId === null)
+                          .map((condition, index) => renderCondition(condition, index === 0))}
+                      </div>
+                      
+                      {/* Groups */}
+                      {groups.map(group => renderGroup(group))}
+                    </div>
+                  </div>
+                  
+                  <hr className="my-6" />
+                  
+                  <div className="mt-6">
+                    <h3 className="text-lg font-semibold mb-4 text-red-600 flex items-center">
+                      <Code size={18} className="mr-2" />
+                      Generated Query Preview
+                    </h3>
+                    
+                    <div className="bg-gray-50 p-4 rounded border border-gray-200 overflow-x-auto mb-4">
+                      <p className="text-sm font-semibold text-red-600">SQL:</p>
+                      <pre className="text-sm font-mono mt-2 whitespace-pre-wrap">
+                        {generateSQL() || 'No conditions defined yet'}
+                      </pre>
+                    </div>
+                    
+                    <div className="bg-gray-50 p-4 rounded border border-gray-200 overflow-x-auto">
+                      <p className="text-sm font-semibold text-red-600">JSON:</p>
+                      <pre className="text-sm font-mono mt-2 whitespace-pre-wrap">
+                        {generateJSONOutput()}
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="bg-gray-50 px-6 py-3 flex justify-end rounded-b-lg border-t border-gray-200">
+                  <button 
+                    onClick={handleCloseBuilder} 
+                    className="border border-red-600 text-red-600 hover:bg-red-50 px-4 py-2 rounded mr-2"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={handleSubmit} 
+                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded"
+                  >
+                    Submit
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
+
+// Sample usage:
+// 
+// const MyComponent = () => {
+//   // Your database schema
+//   const databaseSchema = {
+//     users: [
+//       { name: 'id', type: 'number' },
+//       { name: 'name', type: 'string' },
+//       { name: 'status', type: 'string' },
+//       // ... other fields
+//     ],
+//     orders: [
+//       { name: 'status', type: 'string' },
+//       // ... order fields
+//     ]
+//   };
+//
+//   // Define predetermined options for specific fields
+//   const fieldOptions = {
+//     users: {
+//       status: ['active', 'inactive', 'pending', 'banned']
+//     },
+//     orders: {
+//       status: [
+//         { value: 'pending', label: 'Pending' },
+//         { value: 'processing', label: 'Processing' },
+//         { value: 'shipped', label: 'Shipped' },
+//         { value: 'delivered', label: 'Delivered' },
+//         { value: 'cancelled', label: 'Cancelled' }
+//       ]
+//     }
+//   };
+//
+//   // Handle the submission
+//   const handleConditionSubmit = (data) => {
+//     console.log('Generated SQL:', data.sql);
+//     console.log('Generated JSON:', data.json);
+//     // Use the data for your application
+//   };
+//
+//   return (
+//     <div>
+//       <h1>My Page</h1>
+//       <ConditionBuilder 
+//         databaseSchema={databaseSchema}
+//         fieldOptions={fieldOptions}
+//         onSubmit={handleConditionSubmit}
+//         buttonLabel="Create Query" 
+//       />
+//     </div>
+//   );
+// };
+
+export default ConditionBuilder;
