@@ -363,7 +363,18 @@ const ConditionBuilder = ({
                     type={getFieldType(condition.field) === 'number' ? 'number' : 
                           getFieldType(condition.field) === 'date' ? 'date' : 'text'}
                     value={condition.value}
-                    onChange={(e) => updateCondition(condition.id, 'value', e.target.value)}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (getFieldType(condition.field) === 'number') {
+                        // Only allow non-negative numbers
+                        if (value === '' || (parseFloat(value) >= 0)) {
+                          updateCondition(condition.id, 'value', value);
+                        }
+                      } else {
+                        updateCondition(condition.id, 'value', value);
+                      }
+                    }}
+                    min={getFieldType(condition.field) === 'number' ? '0' : undefined}
                     placeholder={`Enter ${getFieldType(condition.field)} value`}
                     className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
                   />
